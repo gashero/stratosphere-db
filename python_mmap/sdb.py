@@ -29,11 +29,10 @@ def delete_field(node, field):
 
 ## Internal Implementation #####################################################
 
-class SDB(object):
+class SDBWriter(object):
 
     def __init__(self, redolog, dbsize, dbfile='/tmp/hello.sdb'):
-        self.mf=os.open(dbfile,
-                os.O_CREAT|os.O_TRUNC|os.O_RDWR)
+        self.mf=os.open(dbfile, os.O_CREAT|os.O_TRUNC|os.O_RDWR)
         self.mf.write('\x00'*dbsize)    #may be too large
         self.mm=mmap.mmap(self.mf, dbsize, mmap.MAP_SHARED, mmap.PROT_WRITE)
         return
@@ -44,5 +43,9 @@ class SDB(object):
     def logit(self,logline):
         return
 
-class SDBClient(object):
-    pass
+class SDBReader(object):
+
+    def __init__(self, dbsize, dbfile='/tmp/hello.sdb'):
+        self.mf=os.open(dbfile,os.O_RDONLY)
+        self.mm=mmap.mmap(self.mf, dbsize, mmap.MAP_SHARED, mmap.PROT_READ)
+        return
