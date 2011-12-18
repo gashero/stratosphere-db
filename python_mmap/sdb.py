@@ -33,7 +33,7 @@ class SDBWriter(object):
 
     def __init__(self, redolog, dbsize, dbfile='/tmp/hello.sdb'):
         self.mf=os.open(dbfile, os.O_CREAT|os.O_TRUNC|os.O_RDWR)
-        self.mf.write('\x00'*dbsize)    #may be too large
+        os.write(self.mf,'\x00'*dbsize) #may be too large
         self.mm=mmap.mmap(self.mf, dbsize, mmap.MAP_SHARED, mmap.PROT_WRITE)
         return
 
@@ -49,3 +49,30 @@ class SDBReader(object):
         self.mf=os.open(dbfile,os.O_RDONLY)
         self.mm=mmap.mmap(self.mf, dbsize, mmap.MAP_SHARED, mmap.PROT_READ)
         return
+
+## Unittest ####################################################################
+
+import unittest
+import time
+
+class TestOthers(unittest.TestCase):
+
+    def setUp(self):
+        return
+
+    def tearDown(self):
+        return
+
+    def test_big_db(self):
+        """Test a large mmap file, confirm it works
+
+        In my macmini mb463, 1GB mmap file need 14-27 second
+        """
+        time_start=time.time()
+        sdbw=SDBWriter('/tmp/redo.log',1024**3)
+        time_finish=time.time()
+        #print time_finish-time_start
+        return
+
+if __name__=='__main__':
+    unittest.main()
