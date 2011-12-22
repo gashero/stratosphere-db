@@ -34,14 +34,17 @@ INDEX_RECORD=struct.Struct('QQQQQQQQ')
 
 class SDBWriter(object):
 
-    def __init__(self, redolog, indexsize, chunksize, indexfile='/tmp/hello.sdbi', chunkfile='/tmp/hello.sdbc'):
+    def __init__(self, redolog, indexsize, chunksize,
+            indexfile='/tmp/hello.sdbi', chunkfile='/tmp/hello.sdbc'):
         self.fd_indexfile=os.open(indexfile, os.O_CREAT|os.O_TRUNC|os.O_RDWR)
         self.fd_chunkfile=os.open(chunkfile, os.O_CREAT|os.O_TRUNC|os.O_RDWR)
         os.write(self.fd_indexfile,'\x00'*indexsize)
         os.write(self.fd_chunkfile,'\x00'*chunksize)
-        self.indexfile=mmap.mmap(self.fd_indexfile, indexsize, mmap.MAP_SHARED, mmap.PROT_WRITE)
-        self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize, mmap.MAP_SHARED, mmap.PROT_WRITE)
-        self.indexfile[:8]=struct.pack('Q',1)
+        self.indexfile=mmap.mmap(self.fd_indexfile, indexsize,
+                mmap.MAP_SHARED, mmap.PROT_WRITE)
+        self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize,
+                mmap.MAP_SHARED, mmap.PROT_WRITE)
+        self.indexfile[:16]=struct.pack('QQ',1,0)
         return
 
     def __del__(self):
@@ -52,30 +55,99 @@ class SDBWriter(object):
     def logit(self,logline):
         return
 
-    def get_next_id(self):
-        meta_record=INDEX_RECORD.unpack(self.indexfile[:64])
-        next_index_id=meta_record[0]+1
-        meta_record=list(meta_record)
-        meta_record[0]=next_index_id
-        self.indexfile[:64]=INDEX_RECORD.pack(*meta_record)
-        return next_index_id-1
+    def _get_rec(self,pos):
+        rec=list(INDEX_RECORD.unpack(self.indexfile[pos*8:pos*(8+1)]))
+        return rec
 
-    def new_record(self,key,value,rid):
+    def _set_rec(self,pos,rec):
+        self.indexfile[pos*8:pos*(8+1)]=INDEX_RECORD.pack(*rec)
+        return
+
+    def new_record(self,key,value):
         s=key+'='+value
+        #inc index id & chunk id
+        meta_record=self._get_rec(0)
+        index_id=meta_record[0]
+        chunk_id=meta_record[1]
+        meta_record[0]=index_id+1
+        meta_record[1]=chunk_id+len(s)+8+1
+        self._set_rec(0,meta_record)
+        #write chunk
+        chunk=struct.pack('Q',len(s))+s+'\n'
+        self.chunkfile[chunk_id:chunk_id+len(s)+8+1]=chunk
+        #write index
+        vertex_record=[chunk_id,0,0,0,0,0,0,0]
+        self._set_rec(index_id,vertex_record)
+        return index_id
 
-    def update_pointer(self,rid_from,rid_to):
-        #TODO:
+    def update_pointer(self,rid_from,rid_to1,rid_to2):
+        objpos=rid_from
+        while True:
+            rec=self._get_rec(objpos)
+            for (pos,iid) in zip(range(1,6),rec[1:-1]):
+                if iid==rid_to1:
+                    rec[pos]==rid_to2
+                    break
+            else:
+                if rec[-1]!=0:
+                    objpos=rec[-1]
+                else:
+                    raise ValueError,'rid_to1 not found'
+        self._set_rec(objpos,rec)
         return
 
     def append_pointer(self,rid_from,rid_to):
-        #TODO:
+        objpos=rid_from
+        while True:
+            rec=self._get_rec(objpos)
+            if rec[-1]!=0:
+                objpos=rec[-1]
+            else:
+                break
+        for pos in range(6,1):
+            if rec[pos]!=0:
+                break
+        if pos!=6:  #record is not full
+            rec[pos]=rid_to
+            self._set_rec(objpos,rec)
+        else:
+            #inc index id
+            meta_record=self._get_rec(0)
+            index_id=meta_record[0]
+            meta_record[0]=index_id+1
+            self._set_rec(0,meta_record)
+            rec[-1]=index_id
+            self._set_rec(objpos,rec)
+            new_ext_rec=[0,rid_to,0,0,0,0,0]
+            self._set_rec(index_id,new_ext_rec)
+        return
+
+    def delete_pointer(self,rid_from,rid_to):
+        objpos=rid_from
+        while True:
+            rec=self._get_rec(objpos)
+            for (pos,iid) in zip(range(1,6),rec[1:6]):
+                if iid==rid_to:
+                    rec[pos]=0
+                    break
+            else:
+                if rec[-1]!=0:
+                    objpos=rec[-1]
+                else:
+                    raise ValueError,'rid_to not found'
+        self._set_rec(objpos,rec)
         return
 
 class SDBReader(object):
 
-    def __init__(self, dbsize, dbfile='/tmp/hello.sdb'):
-        self.mf=os.open(dbfile,os.O_RDONLY)
-        self.mm=mmap.mmap(self.mf, dbsize, mmap.MAP_SHARED, mmap.PROT_READ)
+    def __init__(self, indexsize, chunksize,
+            indexfile='/tmp/hello.sdbi', chunkfile='/tmp/hello.sdbc'):
+        self.fd_indexfile=os.open(indexfile,os.O_RDONLY)
+        self.fd_chunkfile=os.open(chunkfile,os.O_RDONLY)
+        self.indexfile=mmap.mmap(self.fd_indexfile, indexsize,
+                mmap.MAP_SHARED, mmap.PROT_READ)
+        self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize,
+                mmap.MAP_SHARED, mmap.PROT_READ)
         return
 
 ## Unittest ####################################################################
@@ -110,12 +182,6 @@ class TestSDBWriter(unittest.TestCase):
 
     def tearDown(self):
         del self.sdbw
-        return
-
-    def test_get_next_id(self):
-        self.assertEqual(self.sdbw.get_next_id(),1)
-        self.assertEqual(self.sdbw.get_next_id(),2)
-        self.assertEqual(self.sdbw.indexfile[:8],'\x03\x00\x00\x00\x00\x00\x00\x00')
         return
 
 if __name__=='__main__':
