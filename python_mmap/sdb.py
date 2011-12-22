@@ -28,6 +28,17 @@ def append_field(node, field):
 def delete_field(node, field):
     return
 
+class NotFoundError(Exception):
+
+    def __init__(self,errmsg,errnum=0):
+        self.errmsg=errmsg
+        self.errnum=errnum
+        self.args=(errnum,errmsg)
+        return
+
+    def __repr__(self):
+        return 'NotFoundError(%s,%d)'%(repr(self.errmsg),self.errnum)
+
 ## Internal Implementation #####################################################
 
 INDEX_RECORD=struct.Struct('QQQQQQQQ')
@@ -44,7 +55,7 @@ class SDBWriter(object):
                 mmap.MAP_SHARED, mmap.PROT_WRITE)
         self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize,
                 mmap.MAP_SHARED, mmap.PROT_WRITE)
-        self.indexfile[:16]=struct.pack('QQ',1,0)
+        self.indexfile[:16]=struct.pack('QQ',1,1)
         return
 
     def __del__(self):
@@ -56,11 +67,16 @@ class SDBWriter(object):
         return
 
     def _get_rec(self,pos):
-        rec=list(INDEX_RECORD.unpack(self.indexfile[pos*8:pos*(8+1)]))
+        rec=list(INDEX_RECORD.unpack(self.indexfile[pos*64:(pos+1)*64]))
         return rec
 
     def _set_rec(self,pos,rec):
-        self.indexfile[pos*8:pos*(8+1)]=INDEX_RECORD.pack(*rec)
+        self.indexfile[pos*64:(pos+1)*64]=INDEX_RECORD.pack(*rec)
+        return
+
+    def _set_chunk(self,pos,s):
+        chunk=struct.pack('Q',len(s))+s+'\n'
+        self.chunkfile[pos:pos+len(s)+9]=chunk
         return
 
     def new_record(self,key,value):
@@ -73,11 +89,12 @@ class SDBWriter(object):
         meta_record[1]=chunk_id+len(s)+8+1
         self._set_rec(0,meta_record)
         #write chunk
-        chunk=struct.pack('Q',len(s))+s+'\n'
-        self.chunkfile[chunk_id:chunk_id+len(s)+8+1]=chunk
+        self._set_chunk(chunk_id,s)
         #write index
         vertex_record=[chunk_id,0,0,0,0,0,0,0]
         self._set_rec(index_id,vertex_record)
+        self.indexfile.flush()
+        self.chunkfile.flush()
         return index_id
 
     def update_pointer(self,rid_from,rid_to1,rid_to2):
@@ -92,7 +109,7 @@ class SDBWriter(object):
                 if rec[-1]!=0:
                     objpos=rec[-1]
                 else:
-                    raise ValueError,'rid_to1 not found'
+                    raise NotFoundError('rid_to1 not found')
         self._set_rec(objpos,rec)
         return
 
@@ -134,7 +151,7 @@ class SDBWriter(object):
                 if rec[-1]!=0:
                     objpos=rec[-1]
                 else:
-                    raise ValueError,'rid_to not found'
+                    raise NotFoundError('rid_to not found')
         self._set_rec(objpos,rec)
         return
 
@@ -148,6 +165,43 @@ class SDBReader(object):
                 mmap.MAP_SHARED, mmap.PROT_READ)
         self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize,
                 mmap.MAP_SHARED, mmap.PROT_READ)
+        return
+
+    def __del__(self):
+        self.indexfile.close()
+        self.chunkfile.close()
+        return
+
+    def _get_rec(self,pos):
+        rec=list(INDEX_RECORD.unpack(self.indexfile[pos*64:(pos+1)*64]))
+        return rec
+
+    def _get_chunk(self,pos):
+        chunklen=struct.unpack('Q',self.chunkfile[pos:pos+8])[0]
+        chunk=self.chunkfile[pos+8:pos+chunklen+8]
+        return chunk
+
+    def locate_record(self,key,value):
+        pos=1
+        s=key+'='+value
+        while True:
+            rec=self._get_rec(pos)
+            if rec==[0,0,0,0,0,0,0,0]:
+                break
+            chunkpos=rec[0]
+            chunk=self._get_chunk(chunkpos)
+            #print 'chunk=',repr(chunk)
+            if chunk==s:
+                return pos
+            pos+=1
+        raise NotFoundError('key&value not exists')
+
+    def prefix_pointer(self,key,value,prefix=None):
+        #TODO:
+        return
+
+    def regex_pointer(self,key,value,regex=None):
+        #TODO:
         return
 
 ## Unittest ####################################################################
@@ -178,10 +232,48 @@ class TestSDBWriter(unittest.TestCase):
 
     def setUp(self):
         self.sdbw=SDBWriter('/tmp/redo.log',1024**2,1024**2)
+        self.sdbr=SDBReader(1024**2,1024**2)
         return
 
     def tearDown(self):
         del self.sdbw
+        del self.sdbr
+        return
+
+    def test_get_set_rec(self):
+        self.sdbw._set_rec(1,range(2,10))
+        self.sdbw._set_rec(2,range(3,11))
+        self.sdbw._set_rec(3,range(4,12))
+        self.sdbw._set_rec(4,range(5,13))
+        self.assertEqual(self.sdbw._get_rec(1),range(2,10))
+        self.assertEqual(self.sdbw._get_rec(4),range(5,13))
+        self.assertEqual(self.sdbw._get_rec(2),range(3,11))
+        self.assertEqual(self.sdbw._get_rec(3),range(4,12))
+        return
+
+    def test_new_record(self):
+        self.sdbw.new_record('name','harry')
+        self.sdbw.new_record('name','hliu')
+        self.sdbw.new_record('name','h2')
+        self.sdbw.new_record('name','h3')
+        self.sdbw.new_record('name','h4')
+        self.sdbw.new_record('name','h5')
+        #for i in range(8):
+        #    print '%d\t%s\t%s'%(i,repr(self.sdbw._get_rec(i)),
+        #        self.sdbr._get_rec(i))
+        self.assertEqual(self.sdbr.locate_record('name','hliu'),2)
+        return
+
+    def test_update_pointer(self):
+        #TODO:
+        return
+
+    def test_append_pointer(self):
+        #TODO:
+        return
+
+    def test_delete_pointer(self):
+        #TODO:
         return
 
 if __name__=='__main__':
