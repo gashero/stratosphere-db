@@ -212,6 +212,9 @@ class SDBReader(object):
             rec=self._get_rec(pos)
             if rec==[0,0,0,0,0,0,0,0]:
                 break
+            if rec[0]==-1:
+                pos+=1
+                continue
             chunkpos=rec[0]
             chunk=self._get_chunk(chunkpos)
             #print 'chunk=',repr(chunk)
