@@ -11,22 +11,7 @@ import os
 import mmap
 import struct
 
-## Interface ###################################################################
-
-def get_node(nodename):
-    return
-
-def get_fieldlist(node, filedname=None):
-    return
-
-def new_node(nodename):
-    return
-
-def append_field(node, field):
-    return
-
-def delete_field(node, field):
-    return
+## Internal Implementation #####################################################
 
 class NotFoundError(Exception):
 
@@ -38,8 +23,6 @@ class NotFoundError(Exception):
 
     def __repr__(self):
         return 'NotFoundError(%s,%d)'%(repr(self.errmsg),self.errnum)
-
-## Internal Implementation #####################################################
 
 INDEX_RECORD=struct.Struct('QQQQQQQQ')
 
@@ -98,6 +81,23 @@ class SDBWriter(object):
         #self.chunkfile.flush()
         return index_id
 
+    def set_pointer(self,rid_from,rid_to):
+        objpos=rid_from
+        while True:
+            rec=self._get_rec(objpos)
+            dataset=[]
+            try:
+                blankpos=rec[1:-1].index(0)
+                rec[blankpos+1]=rid_to
+                break
+            except ValueError:
+                if rec[-1]!=0:
+                    objpos=rec[-1]
+                else:
+                    raise NotFoundError('rid_to1 not found')
+        self._set_rec(objpos,rec)
+        return
+
     def append_pointer(self,rid_from,rid_to):
         objpos=rid_from
         #get last record
@@ -122,27 +122,6 @@ class SDBWriter(object):
             self._set_rec(objpos,rec)
             new_ext_rec=[-1,rid_to,0,0,0,0,0]
             self._set_rec(index_id,new_ext_rec)
-        return
-
-    def update_pointer(self,rid_from,rid_to1,rid_to2):
-        objpos=rid_from
-        while True:
-            rec=self._get_rec(objpos)
-            dataset=[]
-            if rid_to1 in rec[1:-1]:
-                for iid in rec[1:-1]:
-                    if iid==rid_to1:
-                        dataset.append(rid_to2)
-                    else:
-                        dataset.append(iid)
-                rec=rec[:1]+dataset+rec[-1:]
-                break
-            else:
-                if rec[-1]!=0:
-                    objpos=rec[-1]
-                else:
-                    raise NotFoundError('rid_to1 not found')
-        self._set_rec(objpos,rec)
         return
 
     def delete_pointer(self,rid_from,rid_to):
@@ -314,8 +293,9 @@ class TestSDBWriterReader(unittest.TestCase):
         self.assertEqual(self.sdbr.locate_record('name','harry'),1)
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=29','age=30'])
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry),['age=29','age=30','sex=male'])
-        self.sdbw.update_pointer(rid_harry,rid_age29,rid_age31)
-        self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=31','age=30'])
+        self.sdbw.delete_pointer(rid_harry,rid_age29)
+        self.sdbw.set_pointer(rid_harry,rid_age31)
+        self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30','age=31'])
         self.sdbw.delete_pointer(rid_harry,rid_age31)
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30'])
         return
