@@ -7,6 +7,7 @@
 Stratosphere Database implementation by python mmap module.
 """
 
+import re
 import os
 import mmap
 import struct
@@ -39,6 +40,10 @@ class SDBWriter(object):
         self.chunkfile=mmap.mmap(self.fd_chunkfile, chunksize,
                 mmap.MAP_SHARED, mmap.PROT_WRITE)
         self.indexfile[:16]=struct.pack('QQ',1,1)
+        self.redolog_filename=redolog
+        self._loaddb()
+        self.redolist=[]
+        self.redolog=open(self.redolog_filename,'a+')
         return
 
     def __del__(self):
@@ -46,21 +51,46 @@ class SDBWriter(object):
         self.chunkfile.close()
         return
 
-    def logit(self,logline):
+    def _loaddb(self):
+        if not os.path.exists(self.redolog_filename):
+            return
+        _redolog=open(self.redolog_filename,'rb')
+        environ={
+                'set_record':   self._set_rec,
+                'set_chunk':    self._set_chunk,
+                'comment':      lambda x:None,
+                }
+        for line in _redolog.xreadlines():
+            redolist=eval(line)
+            for redo in redolist:
+                eval(redo,environ)
+        _redolog.close()
         return
 
     def _get_rec(self,pos):
         rec=list(INDEX_RECORD.unpack(self.indexfile[pos*64:(pos+1)*64]))
         return rec
 
-    def _set_rec(self,pos,rec):
+    def _set_rec(self,pos,rec,nolog=False):
         assert len(rec)==8
         self.indexfile[pos*64:(pos+1)*64]=INDEX_RECORD.pack(*rec)
+        if not nolog:
+            self.redolist.append('set_record(%d,%s,True)'%(pos,repr(rec)))
         return
 
-    def _set_chunk(self,pos,s):
+    def _set_chunk(self,pos,s,nolog=False):
         chunk=struct.pack('Q',len(s))+s+'\n'
         self.chunkfile[pos:pos+len(s)+9]=chunk
+        if not nolog:
+            self.redolist.append('set_chunk(%d,%s,True)'%(pos,repr(s)))
+        return
+
+    def commit(self,log=None):
+        if log:
+            self.redolog.append('comment(%s)'%repr(log))
+        self.redolog.write(repr(self.redolist)+'\n')
+        self.redolog.flush()
+        self.redolist=[]
         return
 
     def new_record(self,key,value):
@@ -214,6 +244,33 @@ class SDBReader(object):
         retlist=self._filter_pointer(rid,lambda x:pattern.match(x))
         return retlist
 
+def redolog_encode(data):
+    line=data
+    ESCAPE_1CHAR=re.compile('[\t\n\f\r\b]')
+    line=ESCAPE_1CHAR.sub(
+            lambda m:{
+                '\t':'\\t',
+                '\n':'\\n',
+                '\f':'\\f',
+                '\r':'\\r',
+                '\b':'\\b',
+                }.__getitem__(m.group()),
+            data)
+    return line
+
+def redolog_decode(line):
+    ESCAPE_1CHAR=re.compile("\\\\[tnfrb]")
+    data=ESCAPE_1CHAR.sub(
+            lambda m:{
+                '\\t':'\t',
+                '\\n':'\n',
+                '\\f':'\f',
+                '\\r':'\r',
+                '\\b':'\b',
+                }.__getitem__(m.group()),
+            line)
+    return data
+
 ## Unittest ####################################################################
 
 import unittest
@@ -241,6 +298,7 @@ class TestOthers(unittest.TestCase):
 class TestSDBWriterReader(unittest.TestCase):
 
     def setUp(self):
+        os.unlink('/tmp/redo.log')
         self.sdbw=SDBWriter('/tmp/redo.log',1024*2,1024*2)
         self.sdbr=SDBReader(1024*2,1024*2)
         return
@@ -291,6 +349,7 @@ class TestSDBWriterReader(unittest.TestCase):
         self.assertEqual(self.sdbw._get_rec(rid_hliu)[1:],
                 [rid_age29,0,0,0,0,0,0])
         self.assertEqual(self.sdbr.locate_record('name','harry'),1)
+        self.assertEqual(self.sdbr.locate_record('name','hliu'),2)
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=29','age=30'])
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry),['age=29','age=30','sex=male'])
         self.sdbw.delete_pointer(rid_harry,rid_age29)
@@ -298,6 +357,52 @@ class TestSDBWriterReader(unittest.TestCase):
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30','age=31'])
         self.sdbw.delete_pointer(rid_harry,rid_age31)
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30'])
+        return
+
+    def test_commit_loaddb(self):
+        rid_harry=self.sdbw.new_record('name','harry')
+        self.sdbw.commit()
+        rid_hliu=self.sdbw.new_record('name','hliu')
+        self.sdbw.commit()
+        rid_age29=self.sdbw.new_record('age','29')
+        self.sdbw.commit()
+        rid_age30=self.sdbw.new_record('age','30')
+        self.sdbw.commit()
+        rid_male=self.sdbw.new_record('sex','male')
+        self.sdbw.commit()
+        rid_age31=self.sdbw.new_record('age','31')
+        self.sdbw.commit()
+        self.sdbw.append_pointer(rid_harry,rid_age29)
+        self.sdbw.commit()
+        self.sdbw.append_pointer(rid_harry,rid_age30)
+        self.sdbw.commit()
+        self.sdbw.append_pointer(rid_harry,rid_male)
+        self.sdbw.commit()
+        self.sdbw.append_pointer(rid_hliu,rid_age29)
+        self.sdbw.commit()
+        self.sdbw.delete_pointer(rid_harry,rid_age29)
+        self.sdbw.commit()
+        self.sdbw.set_pointer(rid_harry,rid_age31)
+        self.sdbw.commit()
+        self.sdbw.delete_pointer(rid_harry,rid_age31)
+        self.sdbw.commit()
+        os.system('cp /tmp/redo.log /tmp/bkredo.log')
+        del self.sdbw
+        del self.sdbr
+        self.sdbw=SDBWriter('/tmp/redo.log',1024*2,1024*2)
+        self.sdbr=SDBReader(1024*2,1024*2)
+        self.assertEqual(self.sdbr.locate_record('name','harry'),1)
+        self.assertEqual(self.sdbr.locate_record('name','hliu'),2)
+        self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30'])
+        return
+
+class TestRedoLog(unittest.TestCase):
+
+    def test_redolog_encode_decode(self):
+        data='hello\tworld\nhehe\r\ftest\b\n'
+        line=redolog_encode(data)
+        self.assertEqual(line,'hello\\tworld\\nhehe\\r\\ftest\\b\\n')
+        self.assertEqual(redolog_decode(line),data)
         return
 
 if __name__=='__main__':
