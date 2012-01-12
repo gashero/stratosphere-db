@@ -396,6 +396,11 @@ class TestSDBWriterReader(unittest.TestCase):
         self.assertEqual(self.sdbr.prefix_pointer(rid_harry,'age='),['age=30'])
         return
 
+    def test_locate_record(self):
+        self.assertRaises(NotFoundError,
+                self.sdbr.locate_record,'hello','kitty')
+        return
+
 class TestRedoLog(unittest.TestCase):
 
     def test_redolog_encode_decode(self):
