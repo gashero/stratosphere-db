@@ -7,17 +7,44 @@
 #ifndef SDB_CORE_H
 #define SDB_CORE_H
 
-#define POINTERS_PER_NODE   8
+#define POINTERS_PER_NODE   7
 
-typedef struct pointers {
-    void *pointers[POINTERS_PER_NODE];
-} pointers;
+typedef struct sdb_pointer_list_t {
+    void *pointer[POINTERS_PER_NODE];
+    void *next_pointer_list;
+} sdb_pointer_list_t;
 
-typedef struct index_node{
+typedef struct sdb_index_node_t {
     void        *p_data;
-    struct index_node   *p_left;
-    struct index_node   *p_right;
-    pointers    *p_pointers;
-} index_node;
+    struct sdb_index_node_t *p_left;
+    struct sdb_index_node_t *p_right;
+    sdb_pointer_list_t      *p_pointer_list;
+} sdb_index_node_t;
+
+typedef struct sdb_mmap_file_info_t {
+    char    *filename;
+    int     maxsize;
+    int     fd;
+} sdb_mmap_file_info_t;
+
+typedef struct sdb_t {
+    sdb_mmap_file_info_t f_index;
+    sdb_mmap_file_info_t f_pointer;
+    sdb_mmap_file_info_t f_block;
+    char    *fn_redolog;
+    int     fd_redolog;
+} sdb_t;
+
+typedef struct sdb_error_t {
+    int     errnum;
+    char    *errmsg;
+} sdb_error_t;
+
+sdb_error_t *sdb_open_writer(sdb_t *sdb);
+sdb_error_t *sdb_open_reader(sdb_t *sdb);
+void sdb_close(sdb_t *sdb);
+
+sdb_error_t *sdb_error_new(int errnum, char *errmsg);
+void sdb_error_del(sdb_error_t *error);
 
 #endif

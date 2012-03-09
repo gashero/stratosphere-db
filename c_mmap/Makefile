@@ -11,7 +11,7 @@ OBJS=sdb_core.o sdb_cli.o
 .PHONY: all clean
 
 $(TARGET): $(OBJS)
-	$(CC) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c %.h
 	$(COMPILE) -o $@ $<
