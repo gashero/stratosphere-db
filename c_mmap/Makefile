@@ -13,11 +13,9 @@ OBJS=sdb_core.o sdb_cli.o
 $(TARGET): $(OBJS)
 	$(CC) -o $@ $^
 
-.c.o:
+%.o: %.c %.h
 	$(COMPILE) -o $@ $<
 
-.SUFFIXES: .c .o
-
 clean:
-	rm $(TARGET)
+	rm -f $(TARGET)
 	rm -f *.o
