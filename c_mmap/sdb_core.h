@@ -25,12 +25,13 @@ typedef struct sdb_mmap_file_info_t {
     char    *filename;
     int     maxsize;
     int     fd;
+    void    *addr;
 } sdb_mmap_file_info_t;
 
 typedef struct sdb_t {
     sdb_mmap_file_info_t f_index;
     sdb_mmap_file_info_t f_pointer;
-    sdb_mmap_file_info_t f_block;
+    sdb_mmap_file_info_t f_chunk;
     char    *fn_redolog;
     int     fd_redolog;
 } sdb_t;
@@ -38,13 +39,16 @@ typedef struct sdb_t {
 typedef struct sdb_error_t {
     int     errnum;
     char    *errmsg;
+    long    retcode;
 } sdb_error_t;
 
 sdb_error_t *sdb_open_writer(sdb_t *sdb);
 sdb_error_t *sdb_open_reader(sdb_t *sdb);
-void sdb_close(sdb_t *sdb);
+sdb_error_t *sdb_close(sdb_t *sdb);
 
-sdb_error_t *sdb_error_new(int errnum, char *errmsg);
+sdb_error_t *sdb_error_new(int errnum, char *errmsg, int retcode);
 void sdb_error_del(sdb_error_t *error);
+void sdb_error_print(sdb_error_t *error);
+void sdb_error_format(sdb_error_t *error);
 
 #endif

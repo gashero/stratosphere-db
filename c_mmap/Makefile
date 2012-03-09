@@ -7,11 +7,12 @@ CFLAGS=-Wall
 COMPILE=$(CC) $(CFLAGS) -c
 TARGET=stratosphere_db
 OBJS=sdb_core.o sdb_cli.o
+LIBS=
 
 .PHONY: all clean
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 %.o: %.c %.h
 	$(COMPILE) -o $@ $<
